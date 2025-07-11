@@ -8,6 +8,7 @@ package org.amnezia.awg.config;
 import org.amnezia.awg.util.NonNullForAll;
 
 import java.net.Inet4Address;
+import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
