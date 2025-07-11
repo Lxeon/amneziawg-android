@@ -56,7 +56,7 @@ jobs:
           ./ui/build/outputs/apk/release/ui-release-unsigned.apk
 
         # 验证签名
-        $ANDROID_HOME/build-tools/34.0.0/apksigner apksigner verify --verbose app-release-signed.apk
+        $ANDROID_HOME/build-tools/34.0.0/apksigner verify --verbose app-release-signed.apk
 
     - name: Upload APK as Artifact
       uses: actions/upload-artifact@v4
