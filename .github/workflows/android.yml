@@ -32,11 +32,24 @@ jobs:
     - name: Build with Gradle
       run: ./gradlew assembleRelease
 
+    - name: Sign APK
+      run: |
+        apksigner sign \
+          --ks my-release-key.keystore \
+          --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} \
+          --ks-key-alias ${{ secrets.KEY_ALIAS }} \
+          --key-pass pass:${{ secrets.KEY_PASSWORD }} \
+          --out app-release-signed.apk \
+          ./ui/build/outputs/apk/release/ui-release-unsigned.apk
+
+        # 验证签名
+        apksigner verify --verbose app-release-signed.apk
+
     - name: Upload APK as Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: artifact
-        path: ./
+        name: app-release-signed.apk
+        path: ./app-release-signed.apk
         retention-days: 7
 
     - name: Upload Release Assets
@@ -46,6 +59,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ./ui/build/outputs/apk/release/ui-release-unsigned.apk
-        asset_name: app-release-unsigned.apk
+        asset_path: app-release-signed.apk
+        asset_name: app-release-signed.apk
         asset_content_type: application/vnd.android.package-archive
