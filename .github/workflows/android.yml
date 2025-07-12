@@ -75,3 +75,10 @@ jobs:
         asset_path: app-release-signed.apk
         asset_name: app-release-signed.apk
         asset_content_type: application/vnd.android.package-archive
+
+    - name: Upload logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: error-build
+        path: ./
