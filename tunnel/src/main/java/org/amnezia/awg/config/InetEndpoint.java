@@ -102,7 +102,6 @@ public final class InetEndpoint {
                 if (resolvedOpt.isPresent()) {
                     Log.i(TAG, "[DNS] SRV record find, wait for next resolve");
                     resolved = resolvedOpt.get();
-                    lastResolution = Instant.now();
                     return resolvedOpt;
                 }
 
@@ -111,7 +110,6 @@ public final class InetEndpoint {
                 if (resolvedOpt.isPresent()) {
                     Log.i(TAG, "[DNS] TXT record find, wait for next resolve");
                     resolved = resolvedOpt.get();
-                    lastResolution = Instant.now();
                     return resolvedOpt;
                 }
 
@@ -166,12 +164,15 @@ public final class InetEndpoint {
         try {
             Lookup lookup = getLookup(domain, Type.SRV);
             Record[] records = lookup.run();
-            if (records != null && records.length > 0) {
-                SRVRecord srv = (SRVRecord) records[0];
-                String targetHost = srv.getTarget().toString(true); // 去掉尾部的点
-                int port = srv.getPort();
-                return Optional.of(new InetEndpoint(targetHost, false, port));
+
+            if (records == null || records.length == 0) {
+                return Optional.empty();
             }
+
+            SRVRecord srv = (SRVRecord) records[0];
+            String targetHost = srv.getTarget().toString(true); // 去掉尾部的点
+            int port = srv.getPort();
+            return Optional.of(new InetEndpoint(targetHost, false, port));
         } catch (TextParseException | UnknownHostException e) {
             Log.e(TAG, Log.getStackTraceString(e));
         }
@@ -193,15 +194,16 @@ public final class InetEndpoint {
         try {
             Lookup lookup = getLookup(domain, Type.TXT);
             Record[] records = lookup.run();
-            if (records != null) {
-                for (Record record : records) {
-                    TXTRecord txt = (TXTRecord) record;
-                    for (Object s : txt.getStrings()) {
-                        String str = s.toString();
-                        if (str.matches("^[^:]+:\\d{1,5}$")) {
-                            String[] parts = str.split(":");
-                            return Optional.of(new InetEndpoint(parts[0], false, Integer.parseInt(parts[1])));
-                        }
+            if (records == null || records.length == 0) {
+                return Optional.empty();
+            }
+            for (Record record : records) {
+                TXTRecord txt = (TXTRecord) record;
+                for (Object s : txt.getStrings()) {
+                    String str = s.toString();
+                    if (str.matches("^[^:]+:\\d{1,5}$")) {
+                        String[] parts = str.split(":");
+                        return Optional.of(new InetEndpoint(parts[0], false, Integer.parseInt(parts[1])));
                     }
                 }
             }
