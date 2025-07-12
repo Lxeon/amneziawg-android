@@ -7,6 +7,8 @@ package org.amnezia.awg.config;
 import android.util.Log;
 import androidx.annotation.Nullable;
 import org.amnezia.awg.util.NonNullForAll;
+import org.xbill.DNS.DohResolver;
+import org.xbill.DNS.ExtendedResolver;
 import org.xbill.DNS.Lookup;
 import org.xbill.DNS.Record;
 import org.xbill.DNS.SRVRecord;
@@ -164,7 +166,10 @@ public final class InetEndpoint {
         try {
             Lookup lookup = new Lookup(domain, Type.SRV);
             lookup.setCache(null);
-            lookup.setResolver(new SimpleResolver("223.5.5.5"));
+            ExtendedResolver exResolver = new ExtendedResolver();
+            exResolver.addResolver(new DohResolver("https://223.5.5.5/dns-query"));
+            exResolver.addResolver(new DohResolver("https://doh.360.cn/dns-query"));
+            lookup.setResolver(exResolver);
             Record[] records = lookup.run();
             if (records != null && records.length > 0) {
                 SRVRecord srv = (SRVRecord) records[0];
@@ -172,7 +177,7 @@ public final class InetEndpoint {
                 int port = srv.getPort();
                 return Optional.of(new InetEndpoint(targetHost, false, port));
             }
-        } catch (TextParseException | UnknownHostException e) {
+        } catch (TextParseException e) {
             Log.e(TAG, Log.getStackTraceString(e));
         }
         return Optional.empty();
