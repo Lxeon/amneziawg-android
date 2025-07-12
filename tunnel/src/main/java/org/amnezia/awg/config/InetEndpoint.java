@@ -2,23 +2,30 @@
  * Copyright © 2017-2023 WireGuard LLC. All Rights Reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
-
 package org.amnezia.awg.config;
 
+import android.util.Log;
+import androidx.annotation.Nullable;
 import org.amnezia.awg.util.NonNullForAll;
+import org.xbill.DNS.Lookup;
+import org.xbill.DNS.Record;
+import org.xbill.DNS.SRVRecord;
+import org.xbill.DNS.TXTRecord;
+import org.xbill.DNS.TextParseException;
+import org.xbill.DNS.Type;
 
 import java.net.Inet4Address;
+import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.UnknownHostException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Pattern;
-
-import androidx.annotation.Nullable;
-
 
 /**
  * An external endpoint (host and port) used to connect to an AmneziaWG {@link Peer}.
@@ -29,13 +36,15 @@ import androidx.annotation.Nullable;
 public final class InetEndpoint {
     private static final Pattern BARE_IPV6 = Pattern.compile("^[^\\[\\]]*:[^\\[\\]]*");
     private static final Pattern FORBIDDEN_CHARACTERS = Pattern.compile("[/?#]");
+    private static final String TAG = "AmneziaWG/InetEndpoint";
 
     private final String host;
     private final boolean isResolved;
     private final Object lock = new Object();
     private final int port;
     private Instant lastResolution = Instant.EPOCH;
-    @Nullable private InetEndpoint resolved;
+    @Nullable
+    private InetEndpoint resolved;
 
     private InetEndpoint(final String host, final boolean isResolved, final int port) {
         this.host = host;
@@ -46,14 +55,17 @@ public final class InetEndpoint {
     public static InetEndpoint parse(final String endpoint) throws ParseException {
         if (FORBIDDEN_CHARACTERS.matcher(endpoint).find())
             throw new ParseException(InetEndpoint.class, endpoint, "Forbidden characters");
+
         final URI uri;
         try {
             uri = new URI("awg://" + endpoint);
         } catch (final URISyntaxException e) {
             throw new ParseException(InetEndpoint.class, endpoint, e);
         }
+
         if (uri.getPort() < 0 || uri.getPort() > 65535)
             throw new ParseException(InetEndpoint.class, endpoint, "Missing/invalid port number");
+
         try {
             InetAddresses.parse(uri.getHost());
             // Parsing ths host as a numeric address worked, so we don't need to do DNS lookups.
@@ -64,12 +76,125 @@ public final class InetEndpoint {
         }
     }
 
-    @Override
-    public boolean equals(final Object obj) {
-        if (!(obj instanceof InetEndpoint))
-            return false;
-        final InetEndpoint other = (InetEndpoint) obj;
-        return host.equals(other.host) && port == other.port;
+    /**
+     * Generate an {@code InetEndpoint} instance with the same port and the host resolved using DNS
+     * to a numeric address. If the host is already numeric, the existing instance may be returned.
+     * Because this function may perform network I/O, it must not be called from the main thread.
+     *
+     * @return the resolved endpoint, or {@link Optional#empty()}
+     */
+    public Optional<InetEndpoint> getResolved() {
+        if (isResolved) {
+            Log.i(TAG, "Endpoint resolved -> " + this);
+            return Optional.of(this);
+        }
+
+        synchronized (lock) {
+            if (Duration.between(lastResolution, Instant.now()).toMinutes() > 1) {
+                // 优先顺序：SRV -> TXT -> IP4P -> 普通DNS解析
+                Optional<InetEndpoint> resolvedOpt;
+
+                // 1. SRV
+                resolvedOpt = resolveViaSrv(host);
+                if (resolvedOpt.isPresent()) {
+                    Log.i(TAG, "[DNS] SRV record find, wait for next resolve");
+                    resolved = resolvedOpt.get();
+                    lastResolution = Instant.now();
+                    return resolvedOpt;
+                }
+
+                // 2. TXT
+                resolvedOpt = resolveViaTxt(host);
+                if (resolvedOpt.isPresent()) {
+                    Log.i(TAG, "[DNS] TXT record find, wait for next resolve");
+                    resolved = resolvedOpt.get();
+                    lastResolution = Instant.now();
+                    return resolvedOpt;
+                }
+
+                try {
+                    InetAddress[] candidates = InetAddress.getAllByName(host);
+                    InetAddress selected = candidates[0];
+
+                    for (InetAddress addr : candidates) {
+                        if (addr instanceof Inet4Address) {
+                            selected = addr;
+                            break;
+                        }
+                    }
+
+                    // 3. IP4P
+                    Optional<InetEndpoint> resolvedIp4p = resolveIp4p(selected);
+                    if (resolvedIp4p.isPresent()) {
+                        Log.i(TAG, "[DNS] ip4p record find");
+                        resolved = resolvedIp4p.get();
+                        lastResolution = Instant.now();
+                        return resolvedIp4p;
+                    }
+
+                    // 4. ipv4/ipv6
+                    if (resolved == null && selected.getHostAddress() != null) {
+                        resolved = new InetEndpoint(selected.getHostAddress(), true, port);
+                    }
+
+                    lastResolution = Instant.now();
+                } catch (UnknownHostException ignored) {
+                    resolved = null;
+                }
+            }
+
+            return Optional.ofNullable(resolved);
+        }
+    }
+
+    private Optional<InetEndpoint> resolveIp4p(InetAddress address) throws UnknownHostException {
+        if (address instanceof Inet6Address) {
+            byte[] v6 = address.getAddress();
+            if ((v6[0] == 0x20) && (v6[1] == 0x01) && (v6[2] == 0x00) && (v6[3] == 0x00)) {
+                InetAddress v4 = InetAddress.getByAddress(Arrays.copyOfRange(v6, 12, 16));
+                int p = ((v6[10] & 0xFF) << 8) | (v6[11] & 0xFF);
+                return Optional.of(new InetEndpoint(Objects.requireNonNull(v4.getHostAddress()), true, p));
+            }
+        }
+        return Optional.empty();
+    }
+
+    private Optional<InetEndpoint> resolveViaSrv(String domain) {
+        try {
+            Lookup lookup = new Lookup(domain, Type.SRV);
+            Record[] records = lookup.run();
+            if (records != null && records.length > 0) {
+                SRVRecord srv = (SRVRecord) records[0];
+                String targetHost = srv.getTarget().toString(true); // 去掉尾部的点
+                int port = srv.getPort();
+                return Optional.of(new InetEndpoint(targetHost, false, port));
+            }
+        } catch (TextParseException e) {
+            Log.e(TAG, Log.getStackTraceString(e));
+        }
+        return Optional.empty();
+    }
+
+    private Optional<InetEndpoint> resolveViaTxt(String domain) {
+        try {
+            Lookup lookup = new Lookup(domain, Type.TXT);
+            Record[] records = lookup.run();
+            if (records != null) {
+                for (Record record : records) {
+                    TXTRecord txt = (TXTRecord) record;
+                    for (Object s : txt.getStrings()) {
+                        String str = s.toString();
+                        if (str.matches("^[^:]+:\\d{1,5}$")) {
+                            String[] parts = str.split(":");
+                            return Optional.of(new InetEndpoint(parts[0], false, Integer.parseInt(parts[1])));
+                        }
+                    }
+                }
+            }
+        } catch (TextParseException | NumberFormatException e) {
+            Log.e(TAG, Log.getStackTraceString(e));
+        }
+        return Optional.empty();
     }
 
     public String getHost() {
@@ -80,37 +205,11 @@ public final class InetEndpoint {
         return port;
     }
 
-    /**
-     * Generate an {@code InetEndpoint} instance with the same port and the host resolved using DNS
-     * to a numeric address. If the host is already numeric, the existing instance may be returned.
-     * Because this function may perform network I/O, it must not be called from the main thread.
-     *
-     * @return the resolved endpoint, or {@link Optional#empty()}
-     */
-    public Optional<InetEndpoint> getResolved() {
-        if (isResolved)
-            return Optional.of(this);
-        synchronized (lock) {
-            //TODO(zx2c4): Implement a real timeout mechanism using DNS TTL
-            if (Duration.between(lastResolution, Instant.now()).toMinutes() > 1) {
-                try {
-                    // Prefer v4 endpoints over v6 to work around DNS64 and IPv6 NAT issues.
-                    final InetAddress[] candidates = InetAddress.getAllByName(host);
-                    InetAddress address = candidates[0];
-                    for (final InetAddress candidate : candidates) {
-                        if (candidate instanceof Inet4Address) {
-                            address = candidate;
-                            break;
-                        }
-                    }
-                    resolved = new InetEndpoint(address.getHostAddress(), true, port);
-                    lastResolution = Instant.now();
-                } catch (final UnknownHostException e) {
-                    resolved = null;
-                }
-            }
-            return Optional.ofNullable(resolved);
-        }
+    @Override
+    public boolean equals(final Object obj) {
+        if (!(obj instanceof InetEndpoint other))
+            return false;
+        return host.equals(other.host) && port == other.port;
     }
 
     @Override
