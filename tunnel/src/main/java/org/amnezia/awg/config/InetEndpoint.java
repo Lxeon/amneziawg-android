@@ -10,6 +10,7 @@ import org.amnezia.awg.util.NonNullForAll;
 import org.xbill.DNS.Lookup;
 import org.xbill.DNS.Record;
 import org.xbill.DNS.SRVRecord;
+import org.xbill.DNS.SimpleResolver;
 import org.xbill.DNS.TXTRecord;
 import org.xbill.DNS.TextParseException;
 import org.xbill.DNS.Type;
@@ -162,6 +163,8 @@ public final class InetEndpoint {
     private Optional<InetEndpoint> resolveViaSrv(String domain) {
         try {
             Lookup lookup = new Lookup(domain, Type.SRV);
+            lookup.setCache(null);
+            lookup.setResolver(new SimpleResolver("223.5.5.5"));
             Record[] records = lookup.run();
             if (records != null && records.length > 0) {
                 SRVRecord srv = (SRVRecord) records[0];
@@ -169,7 +172,7 @@ public final class InetEndpoint {
                 int port = srv.getPort();
                 return Optional.of(new InetEndpoint(targetHost, false, port));
             }
-        } catch (TextParseException e) {
+        } catch (TextParseException | UnknownHostException e) {
             Log.e(TAG, Log.getStackTraceString(e));
         }
         return Optional.empty();
@@ -178,6 +181,8 @@ public final class InetEndpoint {
     private Optional<InetEndpoint> resolveViaTxt(String domain) {
         try {
             Lookup lookup = new Lookup(domain, Type.TXT);
+            lookup.setCache(null);
+            lookup.setResolver(new SimpleResolver("223.5.5.5"));
             Record[] records = lookup.run();
             if (records != null) {
                 for (Record record : records) {
@@ -191,7 +196,7 @@ public final class InetEndpoint {
                     }
                 }
             }
-        } catch (TextParseException | NumberFormatException e) {
+        } catch (TextParseException | NumberFormatException | UnknownHostException e) {
             Log.e(TAG, Log.getStackTraceString(e));
         }
         return Optional.empty();

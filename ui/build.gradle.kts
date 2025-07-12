@@ -24,6 +24,10 @@ android {
         versionCode = providers.gradleProperty("amneziawgVersionCode").get().toInt()
         versionName = providers.gradleProperty("amneziawgVersionName").get()
         buildConfigField("int", "MIN_SDK_VERSION", minSdk.toString())
+
+        ndk {
+            abiFilters.add("arm64-v8a")
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
