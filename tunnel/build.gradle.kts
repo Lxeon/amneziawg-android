@@ -38,7 +38,6 @@ android {
                     arguments("-DANDROID_PACKAGE_NAME=${cmakeAndroidPackageName}")
                 }
             }
-            proguardFiles("proguard-android-optimize.txt", "proguard-rules.pro")
         }
         debug {
             externalNativeBuild {
