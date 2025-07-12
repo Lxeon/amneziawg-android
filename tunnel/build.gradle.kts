@@ -58,5 +58,5 @@ dependencies {
     implementation(libs.androidx.collection)
     compileOnly(libs.jsr305)
     testImplementation(libs.junit)
-    implementation("dnsjava:dnsjava:3.6.3")
+    implementation("dnsjava:dnsjava:3.4.3")
 }
